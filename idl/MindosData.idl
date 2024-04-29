@@ -1,0 +1,9 @@
+module MindosData
+{
+  @final
+  struct Msg
+  {
+    long dsize;
+    string message;
+  };
+};
