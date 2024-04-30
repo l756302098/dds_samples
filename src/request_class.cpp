@@ -24,25 +24,41 @@ private:
   dds_entity_t waitSet,rdCond;
   std::mutex mtx;
   std::function<void(MindosData_Msg&)> callback;
+  //data
+  void *samples[MAX_SAMPLES];
+  MindosData_Msg pub_data;
+  MindosData_Msg sub_data[MAX_SAMPLES];
+  dds_sample_info_t infos[MAX_SAMPLES];
+  dds_time_t waitTimeout = DDS_SECS (3);
 public:
   Request(/* args */);
   ~Request();
   bool Start();
   bool Invoke();
   bool Stop();
+  void SetTrigger();
 };
 
 Request::Request(/* args */):callback(nullptr)
 {
+  memset (&sub_data, 0, sizeof (sub_data));
+  memset (&pub_data, 0, sizeof (pub_data));
+  samples[0] = &sub_data[0];
 }
 
 Request::~Request()
 {
-  
+  /* Clean up */
+}
+
+void Request::SetTrigger()
+{
+  dds_waitset_set_trigger (waitSet, true);
 }
 
 bool Request::Stop()
 {
+  std::cout << "Request Stop" << std::endl;
   {
     std::lock_guard<std::mutex> lock(mtx);
     callback = nullptr;
@@ -69,17 +85,6 @@ bool Request::Invoke()
     return false;
   }
 
-  void *samples[MAX_SAMPLES];
-
-  MindosData_Msg pub_data;
-  MindosData_Msg sub_data[MAX_SAMPLES];
-  memset (&sub_data, 0, sizeof (sub_data));
-  memset (&pub_data, 0, sizeof (pub_data));
-  samples[0] = &sub_data[0];
-  dds_sample_info_t infos[MAX_SAMPLES];
-
-  dds_time_t waitTimeout = DDS_SECS (3);
-
   pub_data.dsize = 10;
   std::string data = "hello world.";
   pub_data.message = const_cast<char*>(data.c_str());
@@ -87,11 +92,6 @@ bool Request::Invoke()
   if (status < 0)
   {
     DDS_FATAL("dds_write_ts: %s\n", dds_strretcode(-status));
-    /* Clean up */
-    for (int i = 0; i < MAX_SAMPLES; i++)
-    {
-      MindosData_Msg_free (&sub_data[i], DDS_FREE_CONTENTS);
-    }
     return false;
   }
 
@@ -190,18 +190,34 @@ bool Request::Start()
   return true;
 }
 
-
+std::atomic_bool running;
+Request rq;
+void CtrlHandler (int sig)
+{
+  running = false;
+  rq.SetTrigger();
+}
 
 int main (int argc, char ** argv)
 {
-  Request rq;
+
+  struct sigaction sat, oldAction;
+  sat.sa_handler = CtrlHandler;
+  sigemptyset (&sat.sa_mask);
+  sat.sa_flags = 0;
+  sigaction (SIGINT, &sat, &oldAction);
+  running = true;
+
+  
   rq.Start();
-  while (1)
+  int count = 10;
+  while (running && count > 0)
   {
     std::cout << "Invoke1..." << std::endl;
     rq.Invoke();
     std::cout << "Invoke2..." << std::endl;
     sleep(1);
+    --count;
   }
   
   rq.Stop();
