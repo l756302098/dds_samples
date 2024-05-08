@@ -8,8 +8,9 @@
 #include <iostream>
 #include <functional>
 #include <atomic>
+#include <signal.h>
 
-#define MAX_SAMPLES 10
+#define MAX_SAMPLES 1
 
 class Subscriber
 {
@@ -22,36 +23,33 @@ private:
   dds_entity_t waitSet,readCond;
   void *samples[MAX_SAMPLES];
   dds_sample_info_t infos[MAX_SAMPLES];
-  dds_attach_t wsresults[1];
-  size_t wsresultsize = 1U;
-  dds_time_t waitTimeout = DDS_SECS (1);
   //func
   std::function<void(MindosData_Msg&)> callback;
 public:
   explicit Subscriber(const std::string& name);
   ~Subscriber();
+  void SetTrigger();
   bool Start();
   bool Stop();
-  void Shutdown();
 };
 
 Subscriber::Subscriber(const std::string& name):topicName(name),isReceive(false)
 {
   std::cout << "topic name:" << name << std::endl;
+  samples[0] = MindosData_Msg__alloc ();
 }
 
 Subscriber::~Subscriber()
 {
-
+  SetTrigger();
+  MindosData_Msg_free (samples[0], DDS_FREE_ALL);
+  std::cout << "samples free finish." << std::endl;
 }
 
-void Subscriber::Shutdown()
+void Subscriber::SetTrigger()
 {
-    {
-      std::lock_guard<std::mutex> lock(mtx);
-      callback = nullptr;
-    }   
-    isReceive =  false;
+  std::cout << "Subscriber SetTrigger" << std::endl;
+  dds_waitset_set_trigger (waitSet, true);
 }
 
 bool Subscriber::Start()
@@ -102,21 +100,23 @@ bool Subscriber::Start()
     return false;
   }
 
-  if (!dds_triggered (waitSet))
-  {
-    printf("# Warm up complete.\n\n");
-    fflush (stdout);
-  }
+  // if (!dds_triggered (waitSet))
+  // {
+  //   printf("# Warm up complete.\n\n");
+  //   fflush (stdout);
+  // }
 
-  samples[0] = MindosData_Msg__alloc ();
   std::cout << "samples alloc finish." << std::endl;
   isReceive = true;
-  std::thread t([&](){
+  std::thread recvTh([&](){
     std::cout << "start thread:" << std::this_thread::get_id() << std::endl;
+    
     while (!dds_triggered (waitSet) && isReceive)
+    //while (!dds_triggered (waitSet))
     {
       printf ("# dds_triggered Waiting ...\n");
-      status = dds_waitset_wait (waitSet, wsresults, wsresultsize, waitTimeout);
+      dds_attach_t wsresults[1];
+      status = dds_waitset_wait (waitSet, wsresults, 1U, DDS_SECS (3));
       if (status < 0)
       {
         DDS_FATAL("dds_waitset_wait: %s\n", dds_strretcode(-status));
@@ -133,26 +133,32 @@ bool Subscriber::Start()
         }
         MindosData_Msg *msg;
         msg = (MindosData_Msg*) samples[0];
-        printf ("=== [receive] Received : ");
-        printf ("Message (%i, %s)\n", msg->dsize, msg->message);
-        fflush (stdout);
         {
           std::lock_guard<std::mutex> lock(mtx);
           if(callback!=nullptr)
             callback(*msg);
         }
       }
+      else
+      {
+        printf ("# status is 0.\n");
+      }
     }
     printf ("# thread exit.\n");
   });
-  t.detach();
+  recvTh.detach();
   return true;
 }
 
 bool Subscriber::Stop()
 {
   /* Free the data location. */
-  MindosData_Msg_free (samples[0], DDS_FREE_ALL);
+  {
+    std::lock_guard<std::mutex> lock(mtx);
+    callback = nullptr;
+  }   
+  isReceive =  false;
+  SetTrigger();
   /* Deleting the participant will delete all its children recursively as well. */
   dds_return_t rc = dds_delete (participant);
   if (rc != DDS_RETCODE_OK)
@@ -163,17 +169,31 @@ bool Subscriber::Stop()
   return true;
 }
 
+std::atomic_bool running;
+Subscriber sub("/data");
+void CtrlHandler (int sig)
+{
+  std::cout << "CtrlHandler." << std::endl;
+  running = false;
+  sub.SetTrigger();
+}
+
 int main (int argc, char ** argv)
 {
-  Subscriber sub("MindosData_Msg");
-  sub.Start();
+  struct sigaction sat, oldAction;
+  sat.sa_handler = CtrlHandler;
+  sigemptyset (&sat.sa_mask);
+  sat.sa_flags = 0;
+  sigaction (SIGINT, &sat, &oldAction);
+  running = true;
 
-  while (1)
+  sub.Start();
+  while (running)
   {
+    std::cout << "sleep..." << std::endl;
     sleep(1);
   }
-  
-  sub.Shutdown();
+
   sub.Stop();
 
   return EXIT_SUCCESS;

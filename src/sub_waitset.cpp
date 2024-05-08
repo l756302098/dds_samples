@@ -4,6 +4,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <thread>
+#include <mutex>
+#include <iostream>
+#include <functional>
+#include <atomic>
+#include <signal.h>
+
 
 #define MAX_SAMPLES 10
 void *samples[MAX_SAMPLES];
@@ -28,8 +34,22 @@ static void data_available(dds_entity_t rd, void *arg)
   printf ("Message (%"PRId32", %s)\n", msg->dsize, msg->message);
 }
 
+std::atomic_bool running;
+void CtrlHandler (int sig)
+{
+  std::cout << "CtrlHandler." << std::endl;
+  running = false;
+}
+
 int main (int argc, char ** argv)
 {
+  struct sigaction sat, oldAction;
+  sat.sa_handler = CtrlHandler;
+  sigemptyset (&sat.sa_mask);
+  sat.sa_flags = 0;
+  sigaction (SIGINT, &sat, &oldAction);
+  running = true;
+
   dds_entity_t participant;
   dds_entity_t topic;
   dds_entity_t reader;
@@ -89,7 +109,7 @@ int main (int argc, char ** argv)
   }
 
   std::thread t([&](){
-    while (!dds_triggered (waitSet))
+    while (!dds_triggered (waitSet) && running)
     {
       printf ("# dds_triggered Waiting ...\n");
       status = dds_waitset_wait (waitSet, wsresults, wsresultsize, waitTimeout);

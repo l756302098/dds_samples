@@ -160,6 +160,9 @@ bool Response::Start()
             if(callback!=nullptr)
               callback(*msg);
           }
+          dds_return_t rc = dds_write (writer, msg);
+          if (rc != DDS_RETCODE_OK)
+            DDS_FATAL("dds_write: %s\n", dds_strretcode(-rc));
         }
       }
     }
