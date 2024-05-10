@@ -36,3 +36,9 @@ target_link_libraries(request_class_samples pthread glog ddsc)
 
 add_executable(response_class_samples src/response_class.cpp src/MindosData.c)
 target_link_libraries(response_class_samples pthread glog ddsc)
+
+add_executable(shm_read src/readShareMemory.cpp)
+target_link_libraries(shm_read pthread glog)
+
+add_executable(shm_write src/writeShareMemory.cpp)
+target_link_libraries(shm_write pthread glog)
